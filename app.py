@@ -182,7 +182,84 @@ if "plan" in st.session_state:
     else:
         st.warning("No HTML fragment returned; using fallback renderer failed. Please try again.")
 
-    titles = plan.get("titles_for_images", [])
-    if titles:
-        st.markdown("#### Exercises / Blocks (for images in Step 3)")
-        st.write(", ".join(titles))
+    st.markdown("---")
+    st.markdown("### Exercise Images")
+    st.caption("Generate images one-by-one. Cached images won’t re-generate.")
+
+    # 1) Build a unique, ordered list of exercise titles from blocks
+    exercise_titles = []
+    blocks = (plan.get("blocks") or [])
+    for blk in blocks:
+        for ex in blk.get("exercises", []):
+            t = (ex.get("title") or "").strip()
+            if t and t not in exercise_titles:
+                exercise_titles.append(t)
+
+    # Optional: cap at first 8–10 to keep UI manageable
+    exercise_titles = exercise_titles[:10]
+
+    if not exercise_titles:
+        st.info("No exercises found in the plan.")
+    else:
+        from utils.parse import safe_filename
+        meta = (plan.get("meta") or {})
+
+        for i, t in enumerate(exercise_titles, start=1):
+            c1, c2, c3 = st.columns([3, 1.1, 1])
+
+            with c1:
+                # Show the exercise title and (optionally) which block it belongs to
+                # Find the first block name where this exercise appears
+                block_name = None
+                for blk in blocks:
+                    if any((ex.get("title") or "").strip() == t for ex in blk.get("exercises", [])):
+                        block_name = blk.get("name")
+                        break
+                if block_name:
+                    st.write(f"**{i}. {t}**  \n<span class='st-emotion-cache-kwuqc'>_Block: {block_name}_</span>", unsafe_allow_html=True)
+                else:
+                    st.write(f"**{i}. {t}**")
+
+            # cached preview slot
+            cached = (ASSETS_IMAGES / safe_filename(t, suffix=".png"))
+            with c2:
+                if cached.exists():
+                    st.image(str(cached), use_container_width=True, caption="Cached")
+                else:
+                    st.empty()
+
+            with c3:
+                gen_key = f"gen_btn_{i}"
+                regen_key = f"regen_btn_{i}"
+
+                if st.button("Generate image", key=gen_key, use_container_width=True):
+                    try:
+                        with st.spinner("Generating…"):
+                            img_path = generate_image_dalle2(
+                                client,
+                                exercise_title=t,
+                                assets_dir=ASSETS_IMAGES,
+                                meta=meta,
+                                size="1024x1024",
+                                force_regen=False,  # only if not cached
+                            )
+                        st.toast(f"Image ready: {img_path.name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Image failed: {e}")
+
+                if st.button("Regenerate", key=regen_key, use_container_width=True):
+                    try:
+                        with st.spinner("Re-generating…"):
+                            img_path = generate_image_dalle2(
+                                client,
+                                exercise_title=t,
+                                assets_dir=ASSETS_IMAGES,
+                                meta=meta,
+                                size="1024x1024",
+                                force_regen=True,
+                            )
+                        st.toast(f"Re-generated: {img_path.name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Image failed: {e}")

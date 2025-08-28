@@ -168,7 +168,7 @@ def _html_fragment_from_core(core: Dict[str, Any]) -> str:
       .wp-wrap{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial,sans-serif;line-height:1.55}
       .wp-title{font-size:1.6rem;font-weight:700;margin:0 0 .5rem 0}
       .wp-meta{color:#bbb;font-size:.95rem;margin:.25rem 0 1rem 0}
-      .wp-card{border:1px solid #eee;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 1px 8px rgba(0,0,0,.05);background:#e0e0e0}
+      .wp-card{border:1px solid #eee;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 1px 8px rgba(0,0,0,.05);background:#444444}
       .wp-card h3{margin:0 0 .5rem 0;font-size:1.1rem}
       .wp-ex{margin:.35rem 0;padding-left:1rem}
       .wp-ex li{margin:.25rem 0}
