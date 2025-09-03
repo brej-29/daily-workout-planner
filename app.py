@@ -6,7 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from services.openai_ops import make_client, generate_workout_plan, generate_image_dalle2
+from services.openai_ops import make_client, generate_workout_plan, generate_image_dalle2, generate_motivation_and_tts
 from utils.ui import render_html_fragment
 
 # ---------- Page & Logging ----------
@@ -57,6 +57,9 @@ _init_state()
 ASSETS_DIR = Path("assets")
 ASSETS_IMAGES = ASSETS_DIR / "images"
 ASSETS_AUDIO = ASSETS_DIR / "audio"
+ASSETS_TEXT = ASSETS_DIR / "text"
+ASSETS_TEXT.mkdir(parents=True, exist_ok=True)
+MOTIVATION_LOG = ASSETS_TEXT / "motivation_log.txt"
 ASSETS_DIR.mkdir(exist_ok=True)
 ASSETS_IMAGES.mkdir(parents=True, exist_ok=True)
 ASSETS_AUDIO.mkdir(parents=True, exist_ok=True)
@@ -224,7 +227,7 @@ if "plan" in st.session_state:
             cached = (ASSETS_IMAGES / safe_filename(t, suffix=".png"))
             with c2:
                 if cached.exists():
-                    st.image(str(cached), use_container_width=True, caption="Cached")
+                    st.image(str(cached), width="stretch", caption="Cached")
                 else:
                     st.empty()
 
@@ -263,3 +266,39 @@ if "plan" in st.session_state:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Image failed: {e}")
+    st.markdown("---")
+    st.markdown("### Motivation (Speech)")
+    st.caption("We won’t show the text. We’ll generate and play audio, and append the text to a local log.")
+
+    if st.button("🎧 Generate Motivation"):
+        try:
+            with st.spinner("Preparing motivation…"):
+                plan = st.session_state.get("plan")
+                if not plan:
+                    st.warning("Please generate a workout plan first.")
+                else:
+                    meta = plan.get("meta") or {}
+                    summary = plan.get("summary") or {}
+                    # Use the name collected earlier in the sidebar
+                    name = st.session_state.get("name", "").strip() or "Athlete"
+
+                    result = generate_motivation_and_tts(
+                        client,
+                        name=name,
+                        meta=meta,
+                        summary=summary,
+                        assets_text_log=MOTIVATION_LOG,
+                        assets_audio_dir=ASSETS_AUDIO,
+                        tts_voice="alloy",          # you can change voices later
+                        text_model="gpt-5-nano",    # cheap text
+                        max_speech_tokens=400
+                    )
+
+                    if result.get("ok"):
+                        st.success("Motivation ready!")
+                        st.audio(str(result["audio_path"]), format="audio/mp3")
+                        st.caption(f"Appended to: {result['text_log_path'].as_posix()}")
+                    else:
+                        st.error("Failed to create motivation.")
+        except Exception as e:
+            st.error(f"Motivation failed: {e}")

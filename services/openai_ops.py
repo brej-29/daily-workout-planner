@@ -444,8 +444,100 @@ def generate_motivation_and_tts(
     summary: Dict[str, Any],
     assets_text_log: Path,
     assets_audio_dir: Path,
-    tts_voice: str = "alloy"
+    tts_voice: str = "alloy",
+    # Accept BOTH names to stay compatible with your app.py
+    text_model: Optional[str] = None,              # legacy arg from your app.py
+    text_model_primary: Optional[str] = None,      # new arg (preferred)
+    text_model_fallback: str = "gpt-4o-mini",
+    max_speech_tokens: int = 400
 ) -> Dict[str, Any]:
+    """
+    Generates a short motivation speech (text) and TTS MP3:
+      - Try gpt-5-nano first (cheap). If empty, retry compact. If still empty, fallback to gpt-4o-mini.
+      - Append text to a local log file.
+      - Synthesize MP3 using streaming TTS and save to assets_audio_dir.
+    Returns: { ok, audio_path, text_log_path, char_count }
+    """
+    from datetime import datetime
+
     assets_audio_dir.mkdir(parents=True, exist_ok=True)
     assets_text_log.parent.mkdir(parents=True, exist_ok=True)
-    return {"ok": True, "note": "Will be implemented in Step 4."}
+
+    # Resolve which primary model to use (maintain compatibility with existing app.py)
+    primary_model = (text_model_primary or text_model or "gpt-5-nano")
+
+    goal = meta.get("goal", "General fitness")
+    env = meta.get("environment", "Gym")
+    level = meta.get("level", "Beginner")
+    dur = meta.get("duration_min")
+    title = (summary or {}).get("title", "Your Workout")
+    person = (name or "athlete").strip()
+
+    sys = "You are a concise, positive fitness coach."
+    user_full = (
+        f"Create a 110–140 word motivation speech for {person} to start today's workout.\n"
+        f"Plan title: {title}\n"
+        f"Goal: {goal}; Environment: {env}; Level: {level}; Duration: {dur} minutes.\n\n"
+        "Rules:\n"
+        "- Speak directly to the person by name.\n"
+        "- Uplifting, practical, no medical claims, no extreme promises.\n"
+        "- Mention focus on warm-up → main block → cool-down in one sentence.\n"
+        "- Avoid shouting, emojis, or hashtags. Use short, energetic sentences.\n"
+        "- End with a decisive call to action (1 line)."
+    )
+    user_compact = (
+        f"110–140 word motivation for {person}. Mention warm-up, main block, cool-down once. "
+        "Direct address, energetic, no medical claims, end with one decisive call to action."
+    )
+
+    def _try_model(m: str, compact: bool = False) -> str:
+        msg = user_compact if compact else user_full
+        resp = client.chat.completions.create(
+            model=m,
+            messages=[{"role": "system", "content": sys},
+                      {"role": "user", "content": msg}],
+            # For Chat Completions: use max_completion_tokens; omit temperature/top_p for GPT-5/4o families
+            max_completion_tokens=max_speech_tokens
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    # 1) Try primary (nano by default)
+    speech_text = _try_model(primary_model, compact=False)
+    # 2) If empty, compact retry
+    if not speech_text:
+        speech_text = _try_model(primary_model, compact=True)
+    # 3) Fallback to 4o-mini (compact)
+    if not speech_text:
+        speech_text = _try_model(text_model_fallback, compact=True)
+    if not speech_text:
+        raise RuntimeError("Motivation text was empty after retries/fallback.")
+
+    # Normalize to ~110–140 words
+    words = speech_text.split()
+    if len(words) > 150:
+        speech_text = " ".join(words[:140]).rstrip() + "."
+
+    # Append to text log
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = f"\n\n=== {ts} — Motivation for {person} ({goal}, {env}, {level}) ===\n"
+    with open(assets_text_log, "a", encoding="utf-8") as f:
+        f.write(header)
+        f.write(speech_text)
+        f.write("\n")
+
+    # TTS (streaming API pattern — no deprecation warning)
+    mp3_name = f"motivation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
+    mp3_path = assets_audio_dir / mp3_name
+    with client.audio.speech.with_streaming_response.create(
+        model="tts-1",
+        voice=tts_voice,
+        input=speech_text
+    ) as response:
+        response.stream_to_file(str(mp3_path))
+
+    return {
+        "ok": True,
+        "audio_path": mp3_path,
+        "text_log_path": assets_text_log,
+        "char_count": len(speech_text)
+    }
