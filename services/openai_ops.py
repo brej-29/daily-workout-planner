@@ -152,7 +152,7 @@ JSON shape example (values are illustrative only):
     resp = client.chat.completions.create(
         model=model,
         temperature=temperature,
-        max_tokens=max_output_tokens,
+        max_completion_tokens=max_output_tokens,  # <- correct for GPT-5 family
         messages=[
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg}
