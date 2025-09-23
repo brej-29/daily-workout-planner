@@ -1,5 +1,5 @@
 streamlit
-openai>=1.40.0
+openai
 requests
 Pillow
 beautifulsoup4
