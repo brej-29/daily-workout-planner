@@ -6,7 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from services.openai_ops import make_client, generate_workout_plan
+from services.openai_ops import make_client, generate_workout_plan, generate_image_dalle2
 from utils.ui import render_html_fragment
 
 # ---------- Page & Logging ----------
@@ -157,7 +157,7 @@ if generate_clicked:
                     calorie_target=int(st.session_state.calorie_target) if st.session_state.use_calorie_target else None,
                     equipment=list(st.session_state.equipment),
                     constraints=list(st.session_state.constraints),
-                    model="gpt-5-nano",
+                    model="gpt-4o-mini",
                     max_output_tokens=3200
                 )
                 st.session_state.plan = plan
