@@ -102,35 +102,59 @@ def compose_export_html(
 def to_pdf_with_playwright(html: str) -> bytes:
     """
     Convert full HTML string to PDF using Playwright (Chromium).
+    Windows-safe:
+      - Forces WindowsProactorEventLoopPolicy so subprocesses work.
+      - Uses Path(...).as_uri() for a correct file:// URL.
     Requires:
         pip install playwright
         python -m playwright install chromium
     """
+    import sys
+    import os
     import tempfile
+    import asyncio
+    from pathlib import Path
     from playwright.sync_api import sync_playwright
 
+    # --- Windows asyncio fix: subprocess support requires Proactor policy ---
+    if sys.platform.startswith("win"):
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())  # type: ignore[attr-defined]
+        except Exception:
+            # If the policy is already set or Python version differs, ignore.
+            pass
+
     # Write the HTML to a temp file
-    with tempfile.NamedTemporaryFile("w", suffix=".html", encoding="utf-8", delete=False) as f:
-        f.write(html)
-        html_path = f.name
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".html", encoding="utf-8", delete=False) as f:
+            f.write(html)
+            tmp_path = f.name
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
-        page = context.new_page()
-        page.goto(f"file:///{html_path}", wait_until="load")
-        page.emulate_media(media="print")
-        # Slight wait in case images are heavy (base64 usually instant)
-        page.wait_for_timeout(150)
+        file_uri = Path(tmp_path).resolve().as_uri()  # robust file:// URL on Windows & *nix
 
-        # A4 portrait, print background, small margins
-        pdf_bytes = page.pdf(
-            format="A4",
-            print_background=True,
-            margin={"top": "12mm", "right": "12mm", "bottom": "12mm", "left": "12mm"},
-            scale=1.0,
-            landscape=False,
-        )
-        context.close()
-        browser.close()
-        return pdf_bytes
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(file_uri, wait_until="load")
+            page.emulate_media(media="print")
+            page.wait_for_timeout(150)  # tiny settle time; base64 images load instantly
+
+            pdf_bytes = page.pdf(
+                format="A4",
+                print_background=True,
+                margin={"top": "12mm", "right": "12mm", "bottom": "12mm", "left": "12mm"},
+                scale=1.0,
+                landscape=False,
+            )
+            context.close()
+            browser.close()
+            return pdf_bytes
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                # Best-effort cleanup; ignore if locked by AV.
+                pass

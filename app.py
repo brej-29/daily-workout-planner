@@ -55,6 +55,38 @@ def _init_state() -> None:
 
 _init_state()
 
+# --- UI polish: typography + cards + subtle hover ---
+st.markdown("""
+<style>
+/* Base type & spacing */
+html, body, [data-testid="stAppViewContainer"] { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Arial, sans-serif; }
+h1, h2, h3 { letter-spacing: .2px; }
+.block-container { padding-top: 1.2rem; padding-bottom: 2.0rem; }
+
+/* Card look for containers */
+.app-card { border: 1px solid #eee; border-radius: 16px; padding: 14px 16px; background: #fff; box-shadow: 0 1px 10px rgba(0,0,0,.05); }
+.app-card:hover { box-shadow: 0 2px 16px rgba(0,0,0,.07); }
+
+/* Buttons */
+div.stButton > button { border-radius: 10px; padding: .55rem .9rem; font-weight: 600; }
+
+/* Download buttons */
+button[kind="secondary"] { border-radius: 10px; }
+
+/* Small pill chips */
+.pill { display:inline-block; padding:2px 10px; border-radius:999px; background:#f4f4f4; font-size:.85rem; color:#444; margin-right:6px; }
+
+/* Make images look neat */
+.app-thumb { border-radius: 12px; border: 1px solid #eee; }
+
+/* Dark mode friendly tweaks */
+@media (prefers-color-scheme: dark) {
+  .app-card { border-color: #2a2a2a; background:#111; box-shadow: none; }
+  .pill { background:#1d1d1d; color:#ddd; }
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ---------- Assets ----------
 ASSETS_DIR = Path("assets")
 ASSETS_IMAGES = ASSETS_DIR / "images"
@@ -177,219 +209,272 @@ if generate_clicked:
         except Exception as e:
             st.error(f"Failed to generate plan: {e}")
 
-# Render plan if present
+# --- Summary metrics row (duration + kcal) ---
 if "plan" in st.session_state:
+    _sum = st.session_state.plan.get("summary", {}) or {}
+    c1, c2, c3 = st.columns([1,1,2])
+    with c1:
+        st.metric("Duration", f"{_sum.get('est_total_minutes','--')} min")
+    with c2:
+        st.metric("Est. Burn", f"{_sum.get('est_total_kcal','--')} kcal")
+    with c3:
+        meta = st.session_state.plan.get("meta", {}) or {}
+        line = f"<span class='pill'>Goal: {meta.get('goal','-')}</span> " \
+               f"<span class='pill'>Env: {meta.get('environment','-')}</span> " \
+               f"<span class='pill'>Level: {meta.get('level','-')}</span>"
+        st.markdown(line, unsafe_allow_html=True)
+
+# Render plan if present (TABS)
+if "plan" in st.session_state:
+    tab_plan, tab_images, tab_export, tab_audio = st.tabs(["📋 Plan", "🖼️ Images", "📤 Export", "🎧 Audio"])
+
     plan = st.session_state.plan
     html_fragment = (plan.get("plan_html_fragment") or "").strip()
     title_text = plan.get("summary", {}).get("title", "Your Workout Plan")
 
-    # Avoid duplicate title: if fragment already has an H1/H2, skip the outer subheader
-    frag_has_title = ("<h1" in html_fragment.lower()) or ("<h2" in html_fragment.lower())
+    # ---- PLAN TAB ----
+    with tab_plan:
+        # Avoid duplicate title: if fragment already has an H1/H2, skip the outer subheader
+        frag_has_title = ("<h1" in html_fragment.lower()) or ("<h2" in html_fragment.lower())
+        if not frag_has_title:
+            st.subheader(title_text)
 
-    if not frag_has_title:
-        st.subheader(title_text)
-
-    if html_fragment:
-        render_html_fragment(html_fragment, height=1200)
-    else:
-        st.warning("No HTML fragment returned; using fallback renderer failed. Please try again.")
-
-    st.markdown("---")
-    st.markdown("### Exercise Images")
-    st.caption("Generate images one-by-one. Cached images won’t re-generate.")
-
-    # 1) Build a unique, ordered list of exercise titles from blocks
-    exercise_titles = []
-    blocks = (plan.get("blocks") or [])
-    for blk in blocks:
-        for ex in blk.get("exercises", []):
-            t = (ex.get("title") or "").strip()
-            if t and t not in exercise_titles:
-                exercise_titles.append(t)
-
-    # Optional: cap at first 8–10 to keep UI manageable
-    exercise_titles = exercise_titles[:10]
-
-    if not exercise_titles:
-        st.info("No exercises found in the plan.")
-    else:
-        from utils.parse import safe_filename
-        meta = (plan.get("meta") or {})
-
-        for i, t in enumerate(exercise_titles, start=1):
-            c1, c2, c3 = st.columns([3, 1.1, 1])
-
-            with c1:
-                # Show the exercise title and (optionally) which block it belongs to
-                # Find the first block name where this exercise appears
-                block_name = None
-                for blk in blocks:
-                    if any((ex.get("title") or "").strip() == t for ex in blk.get("exercises", [])):
-                        block_name = blk.get("name")
-                        break
-                if block_name:
-                    st.write(f"**{i}. {t}**  \n<span class='st-emotion-cache-kwuqc'>_Block: {block_name}_</span>", unsafe_allow_html=True)
-                else:
-                    st.write(f"**{i}. {t}**")
-
-            # cached preview slot
-            cached = (ASSETS_IMAGES / safe_filename(t, suffix=".png"))
-            with c2:
-                if cached.exists():
-                    st.image(str(cached), width="stretch", caption="Cached")
-                else:
-                    st.empty()
-
-            with c3:
-                gen_key = f"gen_btn_{i}"
-                regen_key = f"regen_btn_{i}"
-
-                if st.button("Generate image", key=gen_key, use_container_width=True):
-                    try:
-                        with st.spinner("Generating…"):
-                            img_path = generate_image_dalle2(
-                                client,
-                                exercise_title=t,
-                                assets_dir=ASSETS_IMAGES,
-                                meta=meta,
-                                size="1024x1024",
-                                force_regen=False,  # only if not cached
-                            )
-                        st.toast(f"Image ready: {img_path.name}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Image failed: {e}")
-
-                if st.button("Regenerate", key=regen_key, use_container_width=True):
-                    try:
-                        with st.spinner("Re-generating…"):
-                            img_path = generate_image_dalle2(
-                                client,
-                                exercise_title=t,
-                                assets_dir=ASSETS_IMAGES,
-                                meta=meta,
-                                size="1024x1024",
-                                force_regen=True,
-                            )
-                        st.toast(f"Re-generated: {img_path.name}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Image failed: {e}")
-
-    st.markdown("---")
-    st.markdown("### Export / Share")
-
-    # Build a self-contained HTML document (base64 images + plan fragment)
-    try:
-        full_html = compose_export_html(plan, ASSETS_IMAGES)
-    except Exception as e:
-        st.error(f"Failed to build HTML: {e}")
-        full_html = None
-
-    colA, colB = st.columns(2)
-
-    with colA:
-        if full_html:
-            st.download_button(
-                label="⬇️ Download HTML",
-                data=full_html.encode("utf-8"),
-                file_name=f"{plan.get('summary',{}).get('title','workout').replace(' ','_')}.html",
-                mime="text/html"
-            )
+        if html_fragment:
+            st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+            render_html_fragment(html_fragment, height=1100)
+            st.markdown("</div>", unsafe_allow_html=True)
         else:
-            st.warning("HTML not ready.")
+            st.warning("No HTML fragment returned; using fallback renderer failed. Please try again.")
 
-    with colB:
-        if full_html:
-            try:
-                with st.spinner("Rendering PDF…"):
-                    pdf_bytes = to_pdf_with_playwright(full_html)
-                st.download_button(
-                    label="⬇️ Download PDF",
-                    data=pdf_bytes,
-                    file_name=f"{plan.get('summary',{}).get('title','workout').replace(' ','_')}.pdf",
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.error("PDF export failed. Make sure Playwright is installed and Chromium is downloaded.")
-                st.caption("Run: pip install playwright  and  python -m playwright install chromium")
+    # ---- IMAGES TAB ----
+    with tab_images:
+        st.markdown("#### Cached Gallery")
+        cached_pngs = sorted(ASSETS_IMAGES.glob("*.png"))
+        if cached_pngs:
+            cols = st.columns(4)
+            for idx, p in enumerate(cached_pngs[:12]):
+                with cols[idx % 4]:
+                    st.image(str(p), width="stretch", caption=p.stem, output_format="PNG")
         else:
-            st.warning("PDF not ready.")
+            st.caption("No cached images yet. Generate images below.")
 
-    st.markdown("---")
-    st.markdown("### Motivation (Speech)")
-    st.caption("We won’t show the text. We’ll generate and play audio, and append the text to a local log.")
+        st.markdown("---")
+        st.markdown("#### Exercise Images")
+        st.caption("Generate images one-by-one. Cached images won’t re-generate.")
 
-    if st.button("🎧 Generate Motivation"):
-        try:
-            with st.spinner("Preparing motivation…"):
-                plan = st.session_state.get("plan")
-                if not plan:
-                    st.warning("Please generate a workout plan first.")
-                else:
-                    meta = plan.get("meta") or {}
-                    summary = plan.get("summary") or {}
-                    # Use the name collected earlier in the sidebar
-                    name = st.session_state.get("name", "").strip() or "Athlete"
+        # Build a unique, ordered list of exercise titles from blocks
+        exercise_titles = []
+        blocks = (plan.get("blocks") or [])
+        for blk in blocks:
+            for ex in blk.get("exercises", []):
+                t = (ex.get("title") or "").strip()
+                if t and t not in exercise_titles:
+                    exercise_titles.append(t)
 
-                    result = generate_motivation_and_tts(
-                        client,
-                        name=name,
-                        meta=meta,
-                        summary=summary,
-                        assets_text_log=MOTIVATION_LOG,
-                        assets_audio_dir=ASSETS_AUDIO,
-                        tts_voice=st.session_state.get("tts_voice","alloy"),          # you can change voices later
-                        text_model="gpt-5-nano",    # cheap text
-                        max_speech_tokens=400
-                    )
+        exercise_titles = exercise_titles[:10]  # keep UI manageable
 
-                    if result.get("ok"):
-                        st.success("Motivation ready!")
-                        st.audio(str(result["audio_path"]), format="audio/mp3")
-                        st.caption(f"Appended to: {result['text_log_path'].as_posix()}")
+        if not exercise_titles:
+            st.info("No exercises found in the plan.")
+        else:
+            from utils.parse import safe_filename
+            meta = (plan.get("meta") or {})
+
+            for i, t in enumerate(exercise_titles, start=1):
+                c1, c2, c3 = st.columns([3, 1.1, 1])
+
+                with c1:
+                    # Show the exercise title and block name
+                    block_name = None
+                    for blk in blocks:
+                        if any((ex.get("title") or "").strip() == t for ex in blk.get("exercises", [])):
+                            block_name = blk.get("name")
+                            break
+                    if block_name:
+                        st.write(f"**{i}. {t}**  \n<span class='st-emotion-cache-kwuqc'>_Block: {block_name}_</span>", unsafe_allow_html=True)
                     else:
-                        st.error("Failed to create motivation.")
+                        st.write(f"**{i}. {t}**")
+
+                    # Optional: details expander (no logic change)
+                    ex_details = None
+                    for blk in blocks:
+                        for ex in blk.get("exercises", []):
+                            if (ex.get("title") or "").strip() == t:
+                                ex_details = ex
+                                break
+                        if ex_details: break
+                    if ex_details:
+                        with st.expander("View details", expanded=False):
+                            st.markdown(f"**Prescription:** {ex_details.get('prescription','-')}")
+                            st.markdown(f"**Rest:** {ex_details.get('rest','-')}")
+                            st.markdown(f"**Intensity:** {ex_details.get('intensity','-')}")
+                            notes = ex_details.get('notes','')
+                            if notes:
+                                st.caption(f"Notes: {notes}")
+
+                # cached preview slot
+                cached = (ASSETS_IMAGES / safe_filename(t, suffix=".png"))
+                with c2:
+                    if cached.exists():
+                        st.image(str(cached), width="stretch", caption="Cached")
+                    else:
+                        st.empty()
+
+                with c3:
+                    gen_key = f"gen_btn_{i}"
+                    regen_key = f"regen_btn_{i}"
+
+                    # Remove deprecated/invalid use_container_width on buttons
+                    if st.button("Generate image", key=gen_key):
+                        try:
+                            with st.spinner("Generating…"):
+                                img_path = generate_image_dalle2(
+                                    client,
+                                    exercise_title=t,
+                                    assets_dir=ASSETS_IMAGES,
+                                    meta=meta,
+                                    size="1024x1024",
+                                    force_regen=False,  # only if not cached
+                                )
+                            st.toast(f"Image ready: {img_path.name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Image failed: {e}")
+
+                    if st.button("Regenerate", key=regen_key):
+                        try:
+                            with st.spinner("Re-generating…"):
+                                img_path = generate_image_dalle2(
+                                    client,
+                                    exercise_title=t,
+                                    assets_dir=ASSETS_IMAGES,
+                                    meta=meta,
+                                    size="1024x1024",
+                                    force_regen=True,
+                                )
+                            st.toast(f"Re-generated: {img_path.name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Image failed: {e}")
+
+    # ---- EXPORT TAB ----
+    with tab_export:
+        st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+        st.markdown("#### Export / Share")
+
+        # Build a self-contained HTML document (base64 images + plan fragment)
+        try:
+            full_html = compose_export_html(plan, ASSETS_IMAGES)
         except Exception as e:
-            st.error(f"Motivation failed: {e}")
+            st.error(f"Failed to build HTML: {e}")
+            full_html = None
 
-    st.markdown("---")
-    st.markdown("### Audio: Last & History")
+        colA, colB = st.columns(2)
 
-    # Find most recent MP3
-    mp3_files = sorted(ASSETS_AUDIO.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
-
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        if mp3_files:
-            latest = mp3_files[0]
-            st.write(f"**Latest:** {latest.name}")
-            st.audio(str(latest), format="audio/mp3")
-            with open(latest, "rb") as f:
+        with colA:
+            if full_html:
                 st.download_button(
-                    label="⬇️ Download last MP3",
-                    data=f.read(),
-                    file_name=latest.name,
-                    mime="audio/mpeg",
-                    key="dl_last_mp3"
+                    label="⬇️ Download HTML",
+                    data=full_html.encode("utf-8"),
+                    file_name=f"{plan.get('summary',{}).get('title','workout').replace(' ','_')}.html",
+                    mime="text/html"
                 )
-        else:
-            st.info("No MP3 files yet. Generate motivation first.")
+            else:
+                st.warning("HTML not ready.")
 
-    with col2:
-        st.write("**Recent MP3 files**")
-        if mp3_files:
-            # Show up to 8 most-recent files (excluding the one already shown)
-            for p in mp3_files[1:9]:
-                cL, cR = st.columns([3, 1])
-                with cL:
-                    st.write(p.name)
-                with cR:
-                    with open(p, "rb") as f:
-                        st.download_button("Download", data=f.read(), file_name=p.name, mime="audio/mpeg", key=f"dl_{p.name}")
-        else:
-            st.caption("History will appear here after you generate audio.")
+        with colB:
+            if full_html:
+                try:
+                    with st.spinner("Rendering PDF…"):
+                        pdf_bytes = to_pdf_with_playwright(full_html)
+                    st.download_button(
+                        label="⬇️ Download PDF",
+                        data=pdf_bytes,
+                        file_name=f"{plan.get('summary',{}).get('title','workout').replace(' ','_')}.pdf",
+                        mime="application/pdf"
+                    )
+                except Exception as e:
+                    st.error("PDF export failed. Make sure Playwright is installed and Chromium is downloaded.")
+                    st.caption("Run: pip install playwright  and  python -m playwright install chromium")
+            else:
+                st.warning("PDF not ready.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.caption("HTML is self-contained (images inlined). PDF uses headless Chromium for reliable print layout.")
 
-    
-    
+    # ---- AUDIO TAB ----
+    with tab_audio:
+        st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+        st.markdown("#### Motivation (Speech)")
+        st.caption("We won’t show the text. We’ll generate and play audio, and append the text to a local log.")
+
+        if st.button("🎧 Generate Motivation"):
+            try:
+                with st.spinner("Preparing motivation…"):
+                    plan = st.session_state.get("plan")
+                    if not plan:
+                        st.warning("Please generate a workout plan first.")
+                    else:
+                        meta = plan.get("meta") or {}
+                        summary = plan.get("summary") or {}
+                        # Use the name collected earlier in the sidebar
+                        name = st.session_state.get("name", "").strip() or "Athlete"
+
+                        result = generate_motivation_and_tts(
+                            client,
+                            name=name,
+                            meta=meta,
+                            summary=summary,
+                            assets_text_log=MOTIVATION_LOG,
+                            assets_audio_dir=ASSETS_AUDIO,
+                            tts_voice=st.session_state.get("tts_voice","alloy"),
+                            text_model="gpt-5-nano",
+                            max_speech_tokens=400
+                        )
+
+                        if result.get("ok"):
+                            st.success("Motivation ready!")
+                            st.audio(str(result["audio_path"]), format="audio/mp3")
+                            st.caption(f"Appended to: {result['text_log_path'].as_posix()}")
+                        else:
+                            st.error("Failed to create motivation.")
+            except Exception as e:
+                st.error(f"Motivation failed: {e}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+        st.markdown("#### Audio: Last & History")
+
+        # Find most recent MP3
+        mp3_files = sorted(ASSETS_AUDIO.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            if mp3_files:
+                latest = mp3_files[0]
+                st.write(f"**Latest:** {latest.name}")
+                st.audio(str(latest), format="audio/mp3")
+                with open(latest, "rb") as f:
+                    st.download_button(
+                        label="⬇️ Download last MP3",
+                        data=f.read(),
+                        file_name=latest.name,
+                        mime="audio/mpeg",
+                        key="dl_last_mp3"
+                    )
+            else:
+                st.info("No MP3 files yet. Generate motivation first.")
+
+        with col2:
+            st.write("**Recent MP3 files**")
+            if mp3_files:
+                # Show up to 8 most-recent files (excluding the one already shown)
+                for p in mp3_files[1:9]:
+                    cL, cR = st.columns([3, 1])
+                    with cL:
+                        st.write(p.name)
+                    with cR:
+                        with open(p, "rb") as f:
+                            st.download_button("Download", data=f.read(), file_name=p.name, mime="audio/mpeg", key=f"dl_{p.name}")
+            else:
+                st.caption("History will appear here after you generate audio.")
+        st.markdown("</div>", unsafe_allow_html=True)
