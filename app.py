@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 from services.openai_ops import make_client, generate_workout_plan, generate_image_dalle2, generate_motivation_and_tts
+from utils.exporters import compose_export_html, to_pdf_with_playwright
 from utils.ui import render_html_fragment
 
 # ---------- Page & Logging ----------
@@ -45,6 +46,7 @@ def _init_state() -> None:
         "calorie_target": 400,
         "equipment": [],
         "constraints": [],
+        "tts_voice": "alloy",
         "name": ""
     }
     for k, v in defaults.items():
@@ -93,6 +95,12 @@ with st.sidebar:
         st.markdown("---")
         name = st.text_input("Your name (for motivation later)", value=st.session_state.get("name", ""))
 
+        tts_voice = st.selectbox(
+            "TTS voice",
+            options=["alloy", "verse", "coral", "sage", "ash"],
+            index=0,
+            help="Voice used for the motivation speech"
+        )
         submitted = st.form_submit_button("Save plan settings")
 
 if submitted:
@@ -106,6 +114,7 @@ if submitted:
     st.session_state.equipment = list(equipment)
     st.session_state.constraints = list(constraints)
     st.session_state.name = name.strip()
+    st.session_state.tts_voice = tts_voice
     logger.info("Saved plan settings: %s", {
         "goal": st.session_state.goal,
         "environment": st.session_state.environment,
@@ -266,6 +275,47 @@ if "plan" in st.session_state:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Image failed: {e}")
+
+    st.markdown("---")
+    st.markdown("### Export / Share")
+
+    # Build a self-contained HTML document (base64 images + plan fragment)
+    try:
+        full_html = compose_export_html(plan, ASSETS_IMAGES)
+    except Exception as e:
+        st.error(f"Failed to build HTML: {e}")
+        full_html = None
+
+    colA, colB = st.columns(2)
+
+    with colA:
+        if full_html:
+            st.download_button(
+                label="⬇️ Download HTML",
+                data=full_html.encode("utf-8"),
+                file_name=f"{plan.get('summary',{}).get('title','workout').replace(' ','_')}.html",
+                mime="text/html"
+            )
+        else:
+            st.warning("HTML not ready.")
+
+    with colB:
+        if full_html:
+            try:
+                with st.spinner("Rendering PDF…"):
+                    pdf_bytes = to_pdf_with_playwright(full_html)
+                st.download_button(
+                    label="⬇️ Download PDF",
+                    data=pdf_bytes,
+                    file_name=f"{plan.get('summary',{}).get('title','workout').replace(' ','_')}.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.error("PDF export failed. Make sure Playwright is installed and Chromium is downloaded.")
+                st.caption("Run: pip install playwright  and  python -m playwright install chromium")
+        else:
+            st.warning("PDF not ready.")
+
     st.markdown("---")
     st.markdown("### Motivation (Speech)")
     st.caption("We won’t show the text. We’ll generate and play audio, and append the text to a local log.")
@@ -289,7 +339,7 @@ if "plan" in st.session_state:
                         summary=summary,
                         assets_text_log=MOTIVATION_LOG,
                         assets_audio_dir=ASSETS_AUDIO,
-                        tts_voice="alloy",          # you can change voices later
+                        tts_voice=st.session_state.get("tts_voice","alloy"),          # you can change voices later
                         text_model="gpt-5-nano",    # cheap text
                         max_speech_tokens=400
                     )
@@ -302,3 +352,44 @@ if "plan" in st.session_state:
                         st.error("Failed to create motivation.")
         except Exception as e:
             st.error(f"Motivation failed: {e}")
+
+    st.markdown("---")
+    st.markdown("### Audio: Last & History")
+
+    # Find most recent MP3
+    mp3_files = sorted(ASSETS_AUDIO.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        if mp3_files:
+            latest = mp3_files[0]
+            st.write(f"**Latest:** {latest.name}")
+            st.audio(str(latest), format="audio/mp3")
+            with open(latest, "rb") as f:
+                st.download_button(
+                    label="⬇️ Download last MP3",
+                    data=f.read(),
+                    file_name=latest.name,
+                    mime="audio/mpeg",
+                    key="dl_last_mp3"
+                )
+        else:
+            st.info("No MP3 files yet. Generate motivation first.")
+
+    with col2:
+        st.write("**Recent MP3 files**")
+        if mp3_files:
+            # Show up to 8 most-recent files (excluding the one already shown)
+            for p in mp3_files[1:9]:
+                cL, cR = st.columns([3, 1])
+                with cL:
+                    st.write(p.name)
+                with cR:
+                    with open(p, "rb") as f:
+                        st.download_button("Download", data=f.read(), file_name=p.name, mime="audio/mpeg", key=f"dl_{p.name}")
+        else:
+            st.caption("History will appear here after you generate audio.")
+
+    
+    
