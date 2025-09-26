@@ -4,3 +4,4 @@ requests
 Pillow
 beautifulsoup4
 lxml
+playwright

@@ -160,7 +160,7 @@ if submitted:
     st.sidebar.success("Saved! Settings updated.")
 
 # ---------- Main Preview ----------
-st.title("🏋️ Daily Workout Planner (Step 2)")
+st.title("🏋️ Daily Workout Planner")
 st.caption("AI plan generation wired with structured JSON (Chat Completions + JSON Schema).")
 
 col_left, col_right = st.columns([1.2, 1])
@@ -177,9 +177,11 @@ with col_left:
     st.markdown("**Constraints:** " + (", ".join(st.session_state.constraints) if st.session_state.constraints else "_none_"))
 
 with col_right:
-    st.subheader("Next up")
-    st.write("• Per-exercise DALL·E 2 images with on-disk caching.")
+    st.subheader("Outputs")
+    st.write("• Structured and Detailed workout plan including warmup, main and cooldown")
+    st.write("• Generate image of any exercise in the plan based on request")
     st.write("• Motivation audio: generate/append text and save MP3.")
+    st.write("• Download PDF of complete plan with images. Also download option for generate motivation audio")
 
 st.markdown("---")
 st.subheader("Generate AI Workout Plan")
