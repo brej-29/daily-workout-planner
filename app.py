@@ -11,8 +11,11 @@ from utils.exporters import compose_export_html, to_pdf_with_playwright
 from utils.ui import render_html_fragment
 
 # ---------- Page & Logging ----------
+
 st.set_page_config(page_title="Daily Workout Planner", page_icon="🏋️", layout="wide")
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+
 logger = logging.getLogger("workout_planner")
 
 # ---------- Constants ----------
